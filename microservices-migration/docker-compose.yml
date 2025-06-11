@@ -1,0 +1,240 @@
+services:
+  # 数据库服务
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: insplan_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - insplan-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - insplan-network
+
+  # 服务注册与发现
+  consul:
+    image: consul:latest
+    ports:
+      - "8500:8500"
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    networks:
+      - insplan-network
+
+  # API 网关
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - JWT_SECRET=your-secret-key
+      - PORT=8080
+    depends_on:
+      - consul
+    networks:
+      - insplan-network
+
+  # 用户服务
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=password
+      - DATABASE_NAME=user_service_db
+      - JWT_SECRET=your-secret-key
+      - PORT=8081
+      - SERVICE_HOST=user-service
+      - SERVICE_PORT=8081
+    depends_on:
+      - postgres
+      - consul
+    networks:
+      - insplan-network
+
+  # 计划服务
+  plan-service:
+    build:
+      context: ./services/plan-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=password
+      - DATABASE_NAME=plan_service_db
+      - PORT=8082
+      - SERVICE_HOST=plan-service
+      - SERVICE_PORT=8082
+    depends_on:
+      - postgres
+      - consul
+    networks:
+      - insplan-network
+
+  # 订单服务
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=password
+      - DATABASE_NAME=order_service_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PORT=8083
+      - SERVICE_HOST=order-service
+      - SERVICE_PORT=8083
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - insplan-network
+
+  # 支付服务
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=insplan
+      - DATABASE_PASSWORD=insplan_password
+      - DATABASE_NAME=payment_service
+      - PORT=8003
+      - SERVICE_HOST=payment-service
+      - SERVICE_PORT=8003
+      - ALIPAY_APP_ID=test_alipay_app_id
+      - ALIPAY_PRIVATE_KEY=test_alipay_private_key
+      - ALIPAY_PUBLIC_KEY=test_alipay_public_key
+      - WECHAT_APP_ID=test_wechat_app_id
+      - WECHAT_MCH_ID=test_wechat_mch_id
+      - WECHAT_KEY=test_wechat_key
+    depends_on:
+      - postgres
+      - consul
+    networks:
+      - insplan-network
+
+  # 通知服务
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=insplan
+      - DATABASE_PASSWORD=insplan_password
+      - DATABASE_NAME=notification_service
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PORT=8004
+      - SERVICE_HOST=notification-service
+      - SERVICE_PORT=8004
+      - SMTP_HOST=smtp.example.com
+      - SMTP_PORT=587
+      - SMTP_USERNAME=test@example.com
+      - SMTP_PASSWORD=password
+      - FROM_EMAIL=noreply@insplan.com
+      - FROM_NAME=InsPlan
+      - SMS_ACCESS_KEY_ID=test_key_id
+      - SMS_ACCESS_KEY_SECRET=test_key_secret
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - insplan-network
+
+  # 监控服务
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - insplan-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - insplan-network
+
+  # 日志聚合
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - insplan-network
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    volumes:
+      - ./infrastructure/monitoring/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    depends_on:
+      - elasticsearch
+    networks:
+      - insplan-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - insplan-network
+
+volumes:
+  postgres_data:
+  grafana_data:
+  elasticsearch_data:
+
+networks:
+  insplan-network:
+    driver: bridge
